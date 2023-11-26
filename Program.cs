@@ -5,6 +5,7 @@ using SixLabors.ImageSharp.Processing;
 using ScottPlot;
 using System.Numerics;
 using QuickGraph;
+using DeepCopy;
 
 
 float[,] kernel =
@@ -16,7 +17,7 @@ float[,] kernel =
 
 static List<Point> Bresenham(Point p1, Point p2)
 {
-    List<Point> points = new List<Point>();
+    List<Point> points = new();
     int dx = Math.Abs(p2.X - p1.X), sx = p1.X < p2.X ? 1 : -1;
     int dy = -Math.Abs(p2.Y - p1.Y), sy = p1.Y < p2.Y ? 1 : -1;
     int err = dx + dy, e2;
@@ -56,6 +57,22 @@ static AdjacencyGraph<CoordVertex, Edge<CoordVertex>> downSampleGraphCoords(Adja
         vertex.Y = (int)((float)vertex.Y * factor);
     }
     return graph;
+}
+
+static AdjacencyGraph<CoordVertex, Edge<CoordVertex>> DeepClone(AdjacencyGraph<CoordVertex, Edge<CoordVertex>> graph)
+{
+    var newGraph = new AdjacencyGraph<CoordVertex, Edge<CoordVertex>>(graph.AllowParallelEdges);
+    foreach (var vertex in graph.Vertices)
+    {
+        newGraph.AddVertex(new CoordVertex(vertex.Id, vertex.X, vertex.Y)); // Assuming CoordVertex has a constructor that takes X and Y
+    }
+    foreach (var edge in graph.Edges)
+    {
+        var source = newGraph.Vertices.First(v => v.Id == edge.Source.Id);
+        var target = newGraph.Vertices.First(v => v.Id == edge.Target.Id);
+        newGraph.AddEdge(new Edge<CoordVertex>(source, target));
+    }
+    return newGraph;
 }
 
 static double CalculateMeanSquaredError(Image<Rgba32> img1, Image<Rgba32> img2)
@@ -148,9 +165,10 @@ while (iteration <= maxInter)
     int resolution = (int)((fullResFraction * (size - lowestRes)) + lowestRes);
     Console.WriteLine("Resolution: " + resolution);
     Image<Rgba32> lowResImg = img.Clone();
-    // lowResImg.Mutate(x => x.Resize(resolution, resolution));
+    lowResImg.Mutate(x => x.Resize(resolution, resolution));
+    lowResImg.Save("lowResImg.png");
     Image<Rgba32> lowResCanvas = canvas.Clone();
-    // lowResCanvas.Mutate(x => x.Resize(resolution, resolution));
+    lowResCanvas.Mutate(x => x.Resize(resolution, resolution));
 
     ConcurrentBag<Tuple<int, double, AdjacencyGraph<CoordVertex, Edge<CoordVertex>>>> results = new();
     Parallel.For(0, graph.VertexCount, j =>
@@ -161,12 +179,9 @@ while (iteration <= maxInter)
         {
             // Draw line on clone canvas
             Image<Rgba32> tmpCanvas = lowResCanvas.Clone();
-            var tmpGraph = graph.Clone();
+            var tmpGraph = DeepClone(graph);
             tmpGraph.AddEdge(new Edge<CoordVertex>(tmpGraph.Vertices.ElementAt(currNailId), tmpGraph.Vertices.ElementAt(j)));
-            // AdjacencyGraph<CoordVertex, Edge<CoordVertex>> debugGraph = downSampleGraphCoords(tmpGraph.Clone(), (float)resolution / size);
-
-            tmpCanvas = drawEdgesOnCanvas(tmpGraph, tmpCanvas);
-            // tmpCanvas = drawEdgesOnCanvas(debugGraph, tmpCanvas);
+            tmpCanvas = drawEdgesOnCanvas(downSampleGraphCoords(DeepClone(tmpGraph), (float)resolution / size), tmpCanvas);
             // Calculate error
             tmpCanvas.Mutate(x => x.GaussianBlur(0.5f));
             double error = CalculateMeanSquaredError(lowResImg, tmpCanvas);
